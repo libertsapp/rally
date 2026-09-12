@@ -1,14 +1,18 @@
 """Gestão de organizações (tenants) e seus admins.
 
-Sem controle de acesso ainda — isso é intencional: a autenticação de verdade
-(Clerk) ainda não foi integrada. Quando existir, estas rotas passam a exigir
-papel "superadmin". Documentado em docs/plataforma-volei-plano-estrategico.md.
+Criar/listar organizações e convidar admin são coisas de superadmin.
+Atualizar a identidade de uma organização também pode ser feito pelo admin
+DAQUELA organização (ele cuida da própria marca, não das outras). Ler a
+identidade de uma organização (`/atual`, `/{id}`) continua público — é só a
+marca do grupo, sem dado sensível, e o frontend precisa disso sem estar
+logado pra montar a tela.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.clerk_auth import get_usuario_atual
 from app.database import get_db
 from app.models.config import Config
 from app.models.organizacao import Organizacao
@@ -22,10 +26,10 @@ SLUG_ORGANIZACAO_PADRAO = "dev"
 
 
 def get_or_create_organizacao_padrao(db: Session) -> Organizacao:
-    """Organização usada por todo o resto da API enquanto não existe
-    resolução de tenant por request (header/subdomínio) nem autenticação de
-    verdade — mantém o comportamento de hoje (1 organização só) até a Fase 2
-    terminar de propagar isolamento real pelos outros routers."""
+    """Organização usada por todo o resto da API enquanto um usuário não tem
+    organização própria (visitante anônimo, ou dev/teste sem Clerk) — ver
+    app/tenant.py pra como isso se encaixa com a resolução por usuário
+    autenticado."""
     organizacao = db.query(Organizacao).filter(Organizacao.slug == SLUG_ORGANIZACAO_PADRAO).first()
     if not organizacao:
         organizacao = Organizacao(slug=SLUG_ORGANIZACAO_PADRAO, nome="Organização de desenvolvimento")
@@ -37,13 +41,21 @@ def get_or_create_organizacao_padrao(db: Session) -> Organizacao:
     return organizacao
 
 
+def _exigir_superadmin(usuario: Usuario | None = Depends(get_usuario_atual)) -> Usuario:
+    if not usuario or usuario.tipo != "superadmin":
+        raise HTTPException(status_code=403, detail="Só o superadmin pode fazer isso.")
+    return usuario
+
+
 @router.get("", response_model=list[OrganizacaoSaida])
-def listar_organizacoes(db: Session = Depends(get_db)):
+def listar_organizacoes(db: Session = Depends(get_db), _: Usuario = Depends(_exigir_superadmin)):
     return db.query(Organizacao).all()
 
 
 @router.post("", response_model=OrganizacaoSaida)
-def criar_organizacao(dados: OrganizacaoEntrada, db: Session = Depends(get_db)):
+def criar_organizacao(
+    dados: OrganizacaoEntrada, db: Session = Depends(get_db), _: Usuario = Depends(_exigir_superadmin)
+):
     if db.query(Organizacao).filter(Organizacao.slug == dados.slug).first():
         raise HTTPException(status_code=409, detail="Já existe uma organização com esse slug.")
     organizacao = Organizacao(**dados.model_dump())
@@ -76,7 +88,17 @@ def obter_organizacao(organizacao_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{organizacao_id}", response_model=OrganizacaoSaida)
-def atualizar_organizacao(organizacao_id: str, dados: OrganizacaoAtualizar, db: Session = Depends(get_db)):
+def atualizar_organizacao(
+    organizacao_id: str,
+    dados: OrganizacaoAtualizar,
+    db: Session = Depends(get_db),
+    usuario: Usuario | None = Depends(get_usuario_atual),
+):
+    pode_editar = usuario and (
+        usuario.tipo == "superadmin" or (usuario.tipo == "admin" and usuario.organizacao_id == organizacao_id)
+    )
+    if not pode_editar:
+        raise HTTPException(status_code=403, detail="Você não administra essa organização.")
     organizacao = db.query(Organizacao).filter(Organizacao.id == organizacao_id).first()
     if not organizacao:
         raise HTTPException(status_code=404, detail="Organização não encontrada.")
@@ -88,7 +110,12 @@ def atualizar_organizacao(organizacao_id: str, dados: OrganizacaoAtualizar, db: 
 
 
 @router.post("/{organizacao_id}/admins", response_model=UsuarioSaida)
-def convidar_admin(organizacao_id: str, dados: ConvidarAdminEntrada, db: Session = Depends(get_db)):
+def convidar_admin(
+    organizacao_id: str,
+    dados: ConvidarAdminEntrada,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(_exigir_superadmin),
+):
     organizacao = db.query(Organizacao).filter(Organizacao.id == organizacao_id).first()
     if not organizacao:
         raise HTTPException(status_code=404, detail="Organização não encontrada.")
@@ -107,7 +134,9 @@ def convidar_admin(organizacao_id: str, dados: ConvidarAdminEntrada, db: Session
 
 
 @router.get("/{organizacao_id}/admins", response_model=list[UsuarioSaida])
-def listar_admins(organizacao_id: str, db: Session = Depends(get_db)):
+def listar_admins(
+    organizacao_id: str, db: Session = Depends(get_db), _: Usuario = Depends(_exigir_superadmin)
+):
     return (
         db.query(Usuario)
         .filter(Usuario.organizacao_id == organizacao_id, Usuario.tipo == "admin")

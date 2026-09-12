@@ -5,12 +5,14 @@ resolvido pelo header X-Organizacao-Id (ver app/tenant.py)."""
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.conftest import as_usuario
 
 client = TestClient(app)
 
 
 def _criar_org(slug):
-    return client.post("/organizacoes", json={"slug": slug, "nome": f"Org {slug}"}).json()
+    with as_usuario("superadmin"):
+        return client.post("/organizacoes", json={"slug": slug, "nome": f"Org {slug}"}).json()
 
 
 def _headers(org):

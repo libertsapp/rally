@@ -27,6 +27,7 @@ from app.routers import (
     ranking,
     rodadas,
     sorteio,
+    usuarios,
 )
 
 app = FastAPI(title="Vôlei — API")
@@ -49,6 +50,7 @@ app.include_router(ranking.router)
 app.include_router(dashboard.router)
 app.include_router(gamificacao.router)
 app.include_router(organizacoes.router)
+app.include_router(usuarios.router)
 
 
 @app.get("/")

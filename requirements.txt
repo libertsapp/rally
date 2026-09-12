@@ -4,3 +4,4 @@ python-dotenv==1.2.3
 pydantic==2.13.5
 psycopg[binary]==3.3.5
 aiofiles==24.1.0
+clerk-backend-api==7.0.0

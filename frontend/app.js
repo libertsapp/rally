@@ -15,14 +15,19 @@ const state = {
   draftTeams: null,
   draftGrupos: null,
   placar: { nomeA: 'Time A', nomeB: 'Time B', a: 0, b: 0 },
+  usuario: null, // { id, email, tipo, organizacao_id } — null enquanto não logado
 };
 
 /* ---------------- api helper ---------------- */
 async function api(path, options = {}) {
-  const resp = await fetch(API_BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (window.Clerk?.session) {
+    try {
+      const token = await window.Clerk.session.getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    } catch (e) { /* sessão expirou ou afins — segue sem token, a API trata como anônimo */ }
+  }
+  const resp = await fetch(API_BASE + path, { headers, ...options });
   if (!resp.ok) {
     let detail = resp.statusText;
     try { detail = (await resp.json()).detail || detail; } catch (e) {}
@@ -84,6 +89,42 @@ document.getElementById('bottom-nav').addEventListener('click', (e) => {
 });
 document.getElementById('theme-toggle').addEventListener('click', () => {
   document.body.classList.toggle('light');
+});
+
+/* ---------------- autenticação (Clerk) ---------------- */
+function atualizarBotaoAuth() {
+  const btn = document.getElementById('auth-btn');
+  if (state.usuario) {
+    btn.textContent = '👋';
+    btn.title = `Sair (${state.usuario.email})`;
+  } else {
+    btn.textContent = '👤';
+    btn.title = 'Entrar';
+  }
+}
+
+async function carregarUsuarioAtual() {
+  if (!window.Clerk?.session) { state.usuario = null; return; }
+  try {
+    state.usuario = await get('/usuarios/eu');
+  } catch (e) {
+    state.usuario = null;
+  }
+}
+
+document.getElementById('auth-btn').addEventListener('click', async () => {
+  if (!window.Clerk) { toast('Autenticação ainda carregando, tente de novo em instantes.', true); return; }
+  if (state.usuario) {
+    await window.Clerk.signOut();
+    state.usuario = null;
+    atualizarBotaoAuth();
+    render();
+  } else {
+    window.Clerk.openSignIn({
+      afterSignInUrl: window.location.href,
+      afterSignUpUrl: window.location.href,
+    });
+  }
 });
 
 function render() {
@@ -367,27 +408,82 @@ async function renderMais(view) {
     config: renderConfigSub,
     hall: renderHallSub,
     placar: renderPlacarSub,
+    organizacoes: renderOrganizacoesSub,
   };
   if (state.sub && subs[state.sub]) { await subs[state.sub](view); return; }
+
+  const itens = [
+    ['jogadores', '👤', 'Jogadores', 'Cadastrar, editar e remover'],
+    ['placar', '🔴', 'Placar ao vivo', 'Contagem em tela cheia'],
+    ['hall', '🏆', 'Hall da Fama', 'Campeões por mês e por ano'],
+    ['config', '⚙️', 'Identidade e configurações', 'Cores, nome, prazos de ausência'],
+  ];
+  if (state.usuario?.tipo === 'superadmin') {
+    itens.push(['organizacoes', '🏢', 'Organizações', 'Criar grupos e convidar admins']);
+  }
 
   view.innerHTML = `
     <div class="section-title">Mais</div>
     <div class="panel" style="padding:0;">
-      ${[
-        ['jogadores', '👤', 'Jogadores', 'Cadastrar, editar e remover'],
-        ['placar', '🔴', 'Placar ao vivo', 'Contagem em tela cheia'],
-        ['hall', '🏆', 'Hall da Fama', 'Campeões por mês e por ano'],
-        ['config', '⚙️', 'Identidade e configurações', 'Cores, nome, prazos de ausência'],
-      ].map(([key, icon, title, sub]) => `
+      ${itens.map(([key, icon, title, sub]) => `
         <div class="row" data-open-sub="${key}" style="cursor:pointer;">
           <div class="avatar">${icon}</div>
           <div><div class="row-name">${title}</div><div class="row-sub">${sub}</div></div>
           <div class="row-right">›</div>
         </div>`).join('')}
     </div>
+    ${state.usuario ? `<div class="empty">Logado como ${escapeHtml(state.usuario.email)} (${state.usuario.tipo})</div>` : ''}
   `;
   view.querySelectorAll('[data-open-sub]').forEach((row) => {
     row.addEventListener('click', () => { state.sub = row.dataset.openSub; render(); });
+  });
+}
+
+/* ---- Organizações (só superadmin) ---- */
+async function renderOrganizacoesSub(view) {
+  view.innerHTML = `${subHeader('Organizações')}<div class="empty">Carregando...</div>`;
+  wireVoltar(view);
+  let lista;
+  try {
+    lista = await get('/organizacoes');
+  } catch (e) {
+    view.innerHTML = `${subHeader('Organizações')}<div class="empty">${escapeHtml(e.message)}</div>`;
+    wireVoltar(view);
+    return;
+  }
+
+  view.innerHTML = `
+    ${subHeader('Organizações')}
+    <div class="panel">
+      <label>Nome do novo grupo</label>
+      <input type="text" id="nova-org-nome">
+      <label>Slug (identificador único, ex: volei-de-terca)</label>
+      <input type="text" id="nova-org-slug">
+      <button class="btn block" id="criar-org-btn">Criar organização</button>
+    </div>
+    <div class="panel">
+      ${lista.map((o) => `
+        <div class="row">
+          <div class="avatar">${iniciais(o.nome)}</div>
+          <div><div class="row-name">${escapeHtml(o.nome)}</div><div class="row-sub">${escapeHtml(o.slug)}</div></div>
+          <div class="row-right"><button class="btn ghost" style="padding:6px 10px;font-size:12px;" data-convidar="${o.id}">+ admin</button></div>
+        </div>`).join('')}
+    </div>
+  `;
+  wireVoltar(view);
+  document.getElementById('criar-org-btn').addEventListener('click', () => tryRun(async () => {
+    const nome = document.getElementById('nova-org-nome').value.trim();
+    const slug = document.getElementById('nova-org-slug').value.trim();
+    if (!nome || !slug) throw new Error('Preencha nome e slug.');
+    await post('/organizacoes', { nome, slug });
+    await renderOrganizacoesSub(view);
+  }, 'Organização criada.'));
+  view.querySelectorAll('[data-convidar]').forEach((btn) => {
+    btn.addEventListener('click', () => tryRun(async () => {
+      const email = prompt('E-mail do admin a convidar:');
+      if (!email) return;
+      await post(`/organizacoes/${btn.dataset.convidar}/admins`, { email });
+    }, 'Admin convidado.'));
   });
 }
 
@@ -562,5 +658,24 @@ async function renderPlacarSub(view) {
   } catch (e) {
     toast('Não consegui conectar na API em ' + API_BASE, true);
   }
+
+  // Clerk carrega via <script async> no index.html — pode não estar pronto ainda
+  const esperarClerk = () => new Promise((resolve) => {
+    if (window.Clerk) return resolve();
+    const check = setInterval(() => { if (window.Clerk) { clearInterval(check); resolve(); } }, 100);
+    setTimeout(() => { clearInterval(check); resolve(); }, 8000); // desiste após 8s (ex: bloqueador de script)
+  });
+  await esperarClerk();
+  if (window.Clerk) {
+    await window.Clerk.load();
+    await carregarUsuarioAtual();
+    atualizarBotaoAuth();
+    window.Clerk.addListener(async () => {
+      await carregarUsuarioAtual();
+      atualizarBotaoAuth();
+      render();
+    });
+  }
+
   switchTab('inicio');
 })();
