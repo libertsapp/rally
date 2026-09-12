@@ -32,11 +32,14 @@ from app.routers import (
 
 app = FastAPI(title="Vôlei — API")
 
-# CORS liberado geral por enquanto (é dev local) — quando for pra produção,
-# troca allow_origins=["*"] pela lista real de domínios do frontend
+# Em produção, frontend e API vivem na MESMA origem (tudo sob o mesmo
+# deployment da Vercel, API em /api/*) — CORS só importa mesmo pro dev local
+# (frontend na porta 5500, API na 8000) e pros deploys de preview, que
+# ganham uma URL *.vercel.app diferente a cada vez.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
