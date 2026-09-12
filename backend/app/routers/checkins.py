@@ -5,20 +5,26 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.checkin import Checkin
+from app.models.organizacao import Organizacao
 from app.routers.config import get_or_create_config
 from app.schemas.checkin import CheckinEntrada, CheckinSaida
+from app.tenant import get_organizacao_atual
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
 
 
 @router.get("", response_model=list[CheckinSaida])
-def listar_checkins(db: Session = Depends(get_db)):
-    return db.query(Checkin).all()
+def listar_checkins(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get_organizacao_atual)):
+    return db.query(Checkin).filter(Checkin.organizacao_id == organizacao.id).all()
 
 
 @router.post("", response_model=CheckinSaida)
-def confirmar_presenca(dados: CheckinEntrada, db: Session = Depends(get_db)):
-    config = get_or_create_config(db)
+def confirmar_presenca(
+    dados: CheckinEntrada,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
+    config = get_or_create_config(db, organizacao.id)
     if not config.checkin_data_aberta:
         raise HTTPException(status_code=409, detail="O check-in está fechado no momento.")
     if config.checkin_travado:
@@ -28,7 +34,11 @@ def confirmar_presenca(dados: CheckinEntrada, db: Session = Depends(get_db)):
         )
     ja_confirmado = (
         db.query(Checkin)
-        .filter(Checkin.data == config.checkin_data_aberta, Checkin.jogador_id == dados.jogador_id)
+        .filter(
+            Checkin.organizacao_id == organizacao.id,
+            Checkin.data == config.checkin_data_aberta,
+            Checkin.jogador_id == dados.jogador_id,
+        )
         .first()
     )
     if ja_confirmado:
@@ -36,7 +46,7 @@ def confirmar_presenca(dados: CheckinEntrada, db: Session = Depends(get_db)):
 
     checkin = Checkin(
         id=str(uuid.uuid4()),
-        organizacao_id=config.organizacao_id,
+        organizacao_id=organizacao.id,
         data=config.checkin_data_aberta,
         jogador_id=dados.jogador_id,
         jogador_nome=dados.jogador_nome,
@@ -50,14 +60,22 @@ def confirmar_presenca(dados: CheckinEntrada, db: Session = Depends(get_db)):
 
 
 @router.delete("/{checkin_id}")
-def desmarcar_presenca(checkin_id: str, db: Session = Depends(get_db)):
-    config = get_or_create_config(db)
+def desmarcar_presenca(
+    checkin_id: str,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
+    config = get_or_create_config(db, organizacao.id)
     if config.checkin_travado:
         raise HTTPException(
             status_code=409,
             detail="O check-in está travado pelo admin — não é possível remover confirmações.",
         )
-    checkin = db.query(Checkin).filter(Checkin.id == checkin_id).first()
+    checkin = (
+        db.query(Checkin)
+        .filter(Checkin.id == checkin_id, Checkin.organizacao_id == organizacao.id)
+        .first()
+    )
     if not checkin:
         raise HTTPException(status_code=404, detail="Check-in não encontrado.")
     db.delete(checkin)

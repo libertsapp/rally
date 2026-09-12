@@ -5,18 +5,20 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.jogador import Jogador
+from app.models.organizacao import Organizacao
 from app.routers.config import get_or_create_config
 from app.routers.dashboard import peso_de_jogador, rodadas_oficiais
 from app.schemas.gamificacao import Badges, HallPeriodo, HallVencedor
+from app.tenant import get_organizacao_atual
 from app.utils import ano_de
 
 router = APIRouter(tags=["gamificacao"])
 
 
-def _panela_entries(db: Session, ano: str) -> list[dict]:
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def _panela_entries(db: Session, organizacao_id: str, ano: str) -> list[dict]:
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao_id).all()}
     entradas = []
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao_id):
         if ano_de(r.data) != ano:
             continue
         times = [t for t in r.times if t.player_ids]
@@ -33,9 +35,9 @@ def _panela_entries(db: Session, ano: str) -> list[dict]:
     return entradas
 
 
-def _top_duos(db: Session, ano: str) -> list[tuple[str, str, int]]:
+def _top_duos(db: Session, organizacao_id: str, ano: str) -> list[tuple[str, str, int]]:
     counts: dict[frozenset[str], int] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao_id):
         if ano_de(r.data) != ano:
             continue
         for t in r.times:
@@ -49,9 +51,9 @@ def _top_duos(db: Session, ano: str) -> list[tuple[str, str, int]]:
     return duos
 
 
-def _ultima_participacao(db: Session) -> dict[str, str]:
+def _ultima_participacao(db: Session, organizacao_id: str) -> dict[str, str]:
     ultima: dict[str, str] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao_id):
         for t in r.times:
             for pid in t.player_ids:
                 if pid not in ultima or r.data > ultima[pid]:
@@ -60,14 +62,14 @@ def _ultima_participacao(db: Session) -> dict[str, str]:
 
 
 @router.get("/badges", response_model=Badges)
-def badges(db: Session = Depends(get_db)):
-    config = get_or_create_config(db)
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def badges(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get_organizacao_atual)):
+    config = get_or_create_config(db, organizacao.id)
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()}
     ano_atual = str(date.today().year)
 
     # TOP1: quem mais saiu na foto de campeão no ano corrente
     vezes: dict[str, int] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         if ano_de(r.data) != ano_atual:
             continue
         for t in r.times:
@@ -80,7 +82,7 @@ def badges(db: Session = Depends(get_db)):
     top1 = [pid for pid, v in vezes.items() if v == max_foto] if max_foto > 0 else []
 
     # PANELEIRO / CARREGADOR DE MOCHILA no ano corrente
-    entradas = _panela_entries(db, ano_atual)
+    entradas = _panela_entries(db, organizacao.id, ano_atual)
     paneleiro_counts: dict[str, int] = {}
     for e in entradas:
         if e["diff"] <= 0:
@@ -101,13 +103,13 @@ def badges(db: Session = Depends(get_db)):
     mochila = [pid for pid, _ in sorted(mochila_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]]
 
     # GRUDENTO: dupla #1 do ano corrente
-    duos = _top_duos(db, ano_atual)
+    duos = _top_duos(db, organizacao.id, ano_atual)
     grudento = [duos[0][0], duos[0][1]] if duos else []
 
     # RIP / APOSENTADO: olham o histórico completo
     hoje = date.today()
     rip, aposentado = [], []
-    for pid, data_str in _ultima_participacao(db).items():
+    for pid, data_str in _ultima_participacao(db, organizacao.id).items():
         try:
             dias = (hoje - datetime.strptime(data_str, "%Y-%m-%d").date()).days
         except ValueError:
@@ -131,10 +133,14 @@ def badges(db: Session = Depends(get_db)):
 
 
 @router.get("/hall-da-fama", response_model=list[HallPeriodo])
-def hall_da_fama(modo: str = "anual", db: Session = Depends(get_db)):
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def hall_da_fama(
+    modo: str = "anual",
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()}
     por_periodo: dict[str, dict[str, int]] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         if r.vencedor == -1:
             continue
         time = next((t for t in r.times if t.time_index == r.vencedor), None)

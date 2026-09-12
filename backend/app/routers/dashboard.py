@@ -5,19 +5,21 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.jogador import Jogador
+from app.models.organizacao import Organizacao
 from app.models.rodada import Rodada
 from app.routers.config import get_or_create_config
 from app.schemas.dashboard import AusenteLinha, CampeaoSemana, DuplaLinha, FotoLinha, PanelaLinha, ResumoDashboard
+from app.tenant import get_organizacao_atual
 from app.utils import ano_de
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-def rodadas_oficiais(db: Session) -> list[Rodada]:
+def rodadas_oficiais(db: Session, organizacao_id: str) -> list[Rodada]:
     return (
         db.query(Rodada)
         .options(joinedload(Rodada.times))
-        .filter(Rodada.rascunho.is_(False))
+        .filter(Rodada.rascunho.is_(False), Rodada.organizacao_id == organizacao_id)
         .all()
     )
 
@@ -28,15 +30,16 @@ def peso_de_jogador(jogadores_por_id: dict[str, Jogador], pid: str) -> float:
 
 
 @router.get("/resumo", response_model=ResumoDashboard)
-def resumo(db: Session = Depends(get_db)):
-    config = get_or_create_config(db)
-    rodadas = rodadas_oficiais(db)
+def resumo(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get_organizacao_atual)):
+    config = get_or_create_config(db, organizacao.id)
+    rodadas = rodadas_oficiais(db, organizacao.id)
+    total_jogadores_query = db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id)
 
     if not rodadas:
         return ResumoDashboard(
             ano=str(date.today().year),
             dias_jogados_no_ano=0,
-            jogadores_ativos=db.query(Jogador).count(),
+            jogadores_ativos=total_jogadores_query.count(),
             desaparecidos=0,
             campeao_semana=None,
         )
@@ -62,7 +65,7 @@ def resumo(db: Session = Depends(get_db)):
         if dias > config.dias_para_rip:
             desaparecidos += 1
 
-    total_jogadores = db.query(Jogador).count()
+    total_jogadores = total_jogadores_query.count()
 
     campeao = None
     vencedor_idx = ultima.vencedor
@@ -83,12 +86,16 @@ def resumo(db: Session = Depends(get_db)):
 
 
 @router.get("/mais-vezes-na-foto", response_model=list[FotoLinha])
-def mais_vezes_na_foto(ano: str | None = None, db: Session = Depends(get_db)):
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def mais_vezes_na_foto(
+    ano: str | None = None,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()}
     vezes: dict[str, int] = {pid: 0 for pid in jogadores}
     ultima_conquista: dict[str, str] = {}
 
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         if ano and ano_de(r.data) != ano:
             continue
         for t in r.times:
@@ -112,9 +119,13 @@ def mais_vezes_na_foto(ano: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/duplas-mais-sorteadas", response_model=list[DuplaLinha])
-def duplas_mais_sorteadas(ano: str | None = None, db: Session = Depends(get_db)):
+def duplas_mais_sorteadas(
+    ano: str | None = None,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
     counts: dict[frozenset[str], int] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         if ano and ano_de(r.data) != ano:
             continue
         for t in r.times:
@@ -130,10 +141,14 @@ def duplas_mais_sorteadas(ano: str | None = None, db: Session = Depends(get_db))
 
 
 @router.get("/panelas", response_model=list[PanelaLinha])
-def panelas(ano: str | None = None, db: Session = Depends(get_db)):
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def panelas(
+    ano: str | None = None,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()}
     resultados = []
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         if ano and ano_de(r.data) != ano:
             continue
         times = [t for t in r.times if t.player_ids]
@@ -162,12 +177,12 @@ def panelas(ano: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/ausentes", response_model=list[AusenteLinha])
-def ausentes(db: Session = Depends(get_db)):
-    config = get_or_create_config(db)
-    jogadores = {p.id: p for p in db.query(Jogador).all()}
+def ausentes(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get_organizacao_atual)):
+    config = get_or_create_config(db, organizacao.id)
+    jogadores = {p.id: p for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()}
 
     ultima_participacao: dict[str, str] = {}
-    for r in rodadas_oficiais(db):
+    for r in rodadas_oficiais(db, organizacao.id):
         for t in r.times:
             for pid in t.player_ids:
                 if pid not in ultima_participacao or r.data > ultima_participacao[pid]:

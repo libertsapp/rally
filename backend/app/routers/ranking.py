@@ -3,15 +3,21 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.jogador import Jogador
+from app.models.organizacao import Organizacao
 from app.models.rodada import Rodada
 from app.schemas.ranking import RankingLinha
+from app.tenant import get_organizacao_atual
 from app.utils import ano_de as _ano_de
 
 router = APIRouter(prefix="/ranking", tags=["ranking"])
 
 
 @router.get("", response_model=list[RankingLinha])
-def obter_ranking(ano: int, db: Session = Depends(get_db)):
+def obter_ranking(
+    ano: int,
+    db: Session = Depends(get_db),
+    organizacao: Organizacao = Depends(get_organizacao_atual),
+):
     stats = {
         p.id: {
             "id": p.id,
@@ -22,13 +28,13 @@ def obter_ranking(ano: int, db: Session = Depends(get_db)):
             "vitorias_partidas": 0,
             "datas_campeao": [],
         }
-        for p in db.query(Jogador).all()
+        for p in db.query(Jogador).filter(Jogador.organizacao_id == organizacao.id).all()
     }
 
     rodadas = (
         db.query(Rodada)
         .options(joinedload(Rodada.times))
-        .filter(Rodada.rascunho.is_(False))
+        .filter(Rodada.rascunho.is_(False), Rodada.organizacao_id == organizacao.id)
         .all()
     )
     for r in rodadas:
