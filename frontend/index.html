@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vôlei</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0e2626">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-dot" id="brand-dot"></div>
+    <div>
+      <div class="brand-name" id="brand-name">Vôlei</div>
+      <div class="brand-sub" id="brand-sub">Carregando...</div>
+    </div>
+  </div>
+  <button class="icon-btn" id="theme-toggle" title="Alternar tema" aria-label="Alternar tema claro/escuro">◐</button>
+</header>
+
+<main class="wrap" id="view"></main>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<nav class="bottom-nav" id="bottom-nav">
+  <button data-tab="inicio"><span class="ic">🏠</span>Início</button>
+  <button data-tab="checkin"><span class="ic">✅</span>Check-in</button>
+  <button data-tab="sorteio"><span class="ic">🎲</span>Sorteio</button>
+  <button data-tab="ranking"><span class="ic">🏆</span>Ranking</button>
+  <button data-tab="mais"><span class="ic">☰</span>Mais</button>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>

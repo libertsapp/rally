@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# banco local / segredos
+*.db
+.env
+
+# logs de servidor local
+backend/uvicorn.log
+frontend/server.log
+
+# backups / exports — não versionar arquivos zip do projeto
+*.zip
+
+# node (caso alguma ferramenta de frontend crie)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

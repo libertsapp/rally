@@ -1,0 +1,9 @@
+{
+  "name": "Vôlei",
+  "short_name": "Vôlei",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0e2626",
+  "theme_color": "#0e2626",
+  "icons": []
+}
