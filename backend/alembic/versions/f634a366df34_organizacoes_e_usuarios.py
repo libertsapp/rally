@@ -46,6 +46,30 @@ def upgrade() -> None:
     sa.UniqueConstraint('clerk_user_id'),
     sa.UniqueConstraint('email')
     )
+    # migração de dados: qualquer banco que já tinha uma linha de config (ex:
+    # a organização "dev" usada antes de existir a tabela organizacoes)
+    # precisa ganhar a Organizacao correspondente ANTES da FK ser criada,
+    # senão a constraint quebra em cima de dado real — e a identidade visual
+    # que já estava salva em config (nome_grupo, cores...) não pode se perder.
+    op.execute(
+        """
+        INSERT INTO organizacoes (id, slug, nome, subtitulo, logo_url, cor_primaria, cor_secundaria, link_rede_social, plano)
+        SELECT
+            config.organizacao_id,
+            config.organizacao_id,
+            COALESCE(NULLIF(config.nome_grupo, ''), 'Organização de desenvolvimento'),
+            COALESCE(config.subtitulo, ''),
+            COALESCE(config.logo_url, ''),
+            COALESCE(config.cor_primaria, ''),
+            COALESCE(config.cor_secundaria, ''),
+            COALESCE(config.link_rede_social, ''),
+            'gratuito'
+        FROM config
+        WHERE NOT EXISTS (
+            SELECT 1 FROM organizacoes WHERE organizacoes.id = config.organizacao_id
+        )
+        """
+    )
     with op.batch_alter_table('config') as batch_op:
         batch_op.create_foreign_key('fk_config_organizacao_id', 'organizacoes', ['organizacao_id'], ['id'])
         batch_op.drop_column('nome_grupo')
