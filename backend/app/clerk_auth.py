@@ -48,6 +48,20 @@ def get_usuario_atual(request: Request, db: Session = Depends(get_db)) -> Usuari
     payload = request_state.payload or {}
     email = payload.get("email")
     clerk_user_id = payload.get("sub")
+
+    if not email and clerk_user_id:
+        # o token de sessão padrão do Clerk não inclui "email" nas claims —
+        # só sid/sub/exp/iat e afins. Busca na API do Clerk pelo user_id.
+        try:
+            clerk_user = _get_clerk_sdk().users.get(user_id=clerk_user_id)
+            primary = next(
+                (e for e in (clerk_user.email_addresses or []) if e.id == clerk_user.primary_email_address_id),
+                None,
+            )
+            email = primary.email_address if primary else None
+        except Exception:
+            email = None
+
     if not email:
         return None
 
