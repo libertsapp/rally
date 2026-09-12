@@ -17,7 +17,17 @@ descartável, não precisa de migration.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import checkins, config, dashboard, gamificacao, jogadores, ranking, rodadas, sorteio
+from app.routers import (
+    checkins,
+    config,
+    dashboard,
+    gamificacao,
+    jogadores,
+    organizacoes,
+    ranking,
+    rodadas,
+    sorteio,
+)
 
 app = FastAPI(title="Vôlei — API")
 
@@ -38,6 +48,7 @@ app.include_router(checkins.router)
 app.include_router(ranking.router)
 app.include_router(dashboard.router)
 app.include_router(gamificacao.router)
+app.include_router(organizacoes.router)
 
 
 @app.get("/")

@@ -62,13 +62,13 @@ function iniciais(nome) { return (nome || '?').trim().charAt(0).toUpperCase(); }
 function jogadorPorId(id) { return state.jogadores.find((p) => p.id === id); }
 function anoAtual() { return String(new Date().getFullYear()); }
 
-/* ---------------- identidade visual (Config) ---------------- */
-function aplicarIdentidade(cfg) {
+/* ---------------- identidade visual (Organizacao) ---------------- */
+function aplicarIdentidade(org) {
   const root = document.documentElement;
-  if (cfg.cor_primaria) root.style.setProperty('--accent', cfg.cor_primaria);
-  document.getElementById('brand-name').textContent = cfg.nome_grupo || 'Vôlei';
-  document.getElementById('brand-sub').textContent = cfg.subtitulo || 'Organização recreativa';
-  if (cfg.cor_primaria) document.getElementById('brand-dot').style.background = cfg.cor_primaria;
+  if (org.cor_primaria) root.style.setProperty('--accent', org.cor_primaria);
+  document.getElementById('brand-name').textContent = org.nome || 'Vôlei';
+  document.getElementById('brand-sub').textContent = org.subtitulo || 'Organização recreativa';
+  if (org.cor_primaria) document.getElementById('brand-dot').style.background = org.cor_primaria;
 }
 
 /* ---------------- navegação ---------------- */
@@ -442,20 +442,23 @@ async function renderJogadoresSub(view) {
   });
 }
 
-/* ---- Config / identidade ---- */
+/* ---- Config / identidade ----
+   Identidade (nome, cores, logo) mora em Organizacao; prazos de ausência e
+   check-in são configuração operacional (Config) — dois recursos, um form. */
 async function renderConfigSub(view) {
-  const cfg = await get('/config');
+  const [cfg, org] = await Promise.all([get('/config'), get('/organizacoes/atual')]);
   state.config = cfg;
+  state.organizacao = org;
   view.innerHTML = `
     ${subHeader('Identidade e configurações')}
     <div class="panel">
       <label>Nome do grupo</label>
-      <input type="text" id="cfg-nome" value="${escapeHtml(cfg.nome_grupo)}">
+      <input type="text" id="cfg-nome" value="${escapeHtml(org.nome)}">
       <label>Subtítulo</label>
-      <input type="text" id="cfg-subtitulo" value="${escapeHtml(cfg.subtitulo)}">
+      <input type="text" id="cfg-subtitulo" value="${escapeHtml(org.subtitulo)}">
       <div class="field-row">
-        <div><label>Cor primária</label><input type="text" id="cfg-cor" value="${escapeHtml(cfg.cor_primaria)}" placeholder="#f0603a"></div>
-        <div><label>Link de rede social</label><input type="text" id="cfg-social" value="${escapeHtml(cfg.link_rede_social)}"></div>
+        <div><label>Cor primária</label><input type="text" id="cfg-cor" value="${escapeHtml(org.cor_primaria)}" placeholder="#f0603a"></div>
+        <div><label>Link de rede social</label><input type="text" id="cfg-social" value="${escapeHtml(org.link_rede_social)}"></div>
       </div>
       <div class="field-row">
         <div><label>Dias p/ RIP</label><input type="number" id="cfg-rip" value="${cfg.dias_para_rip}"></div>
@@ -466,17 +469,24 @@ async function renderConfigSub(view) {
   `;
   wireVoltar(view);
   document.getElementById('salvar-config-btn').addEventListener('click', () => tryRun(async () => {
-    const atualizado = await put('/config', {
-      ...cfg,
-      nome_grupo: document.getElementById('cfg-nome').value,
-      subtitulo: document.getElementById('cfg-subtitulo').value,
-      cor_primaria: document.getElementById('cfg-cor').value,
-      link_rede_social: document.getElementById('cfg-social').value,
-      dias_para_rip: parseInt(document.getElementById('cfg-rip').value, 10) || 60,
-      dias_para_aposentado: parseInt(document.getElementById('cfg-aposentado').value, 10) || 100,
-    });
-    state.config = atualizado;
-    aplicarIdentidade(atualizado);
+    const [orgAtualizada] = await Promise.all([
+      put(`/organizacoes/${org.id}`, {
+        nome: document.getElementById('cfg-nome').value,
+        subtitulo: document.getElementById('cfg-subtitulo').value,
+        cor_primaria: document.getElementById('cfg-cor').value,
+        cor_secundaria: org.cor_secundaria,
+        logo_url: org.logo_url,
+        link_rede_social: document.getElementById('cfg-social').value,
+        plano: org.plano,
+      }),
+      put('/config', {
+        ...cfg,
+        dias_para_rip: parseInt(document.getElementById('cfg-rip').value, 10) || 60,
+        dias_para_aposentado: parseInt(document.getElementById('cfg-aposentado').value, 10) || 100,
+      }),
+    ]);
+    state.organizacao = orgAtualizada;
+    aplicarIdentidade(orgAtualizada);
   }, 'Configurações salvas.'));
 }
 
@@ -546,9 +556,9 @@ async function renderPlacarSub(view) {
 /* ---------------- init ---------------- */
 (async function init() {
   try {
-    const cfg = await get('/config');
-    state.config = cfg;
-    aplicarIdentidade(cfg);
+    const org = await get('/organizacoes/atual');
+    state.organizacao = org;
+    aplicarIdentidade(org);
   } catch (e) {
     toast('Não consegui conectar na API em ' + API_BASE, true);
   }

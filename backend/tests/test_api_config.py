@@ -37,25 +37,6 @@ def test_put_config_nunca_deixa_o_cliente_sobrescrever_o_contador_de_acessos():
     assert client.get("/config").json()["contador_acessos"] == 2
 
 
-def test_put_config_salva_identidade_visual_do_grupo():
-    resposta = client.put(
-        "/config",
-        json={
-            "estrelas_visiveis": True,
-            "checkin_data_aberta": "",
-            "checkin_travado": False,
-            "nome_grupo": "Vôlei de Terça",
-            "subtitulo": "Toda terça, 19h",
-            "cor_primaria": "#0a2f5c",
-            "cor_secundaria": "#d4af37",
-        },
-    )
-
-    dados = resposta.json()
-    assert dados["nome_grupo"] == "Vôlei de Terça"
-    assert dados["cor_primaria"] == "#0a2f5c"
-
-
 def test_post_acesso_incrementa_contador():
     antes = client.get("/config").json()["contador_acessos"]
 

@@ -3,17 +3,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.config import Config
+from app.routers.organizacoes import get_or_create_organizacao_padrao
 from app.schemas.config import ConfigEntrada, ConfigSaida
 
 router = APIRouter(prefix="/config", tags=["config"])
 
-ORGANIZACAO_PADRAO = "dev"
-
 
 def get_or_create_config(db: Session) -> Config:
-    config = db.query(Config).filter(Config.organizacao_id == ORGANIZACAO_PADRAO).first()
+    organizacao = get_or_create_organizacao_padrao(db)
+    config = db.query(Config).filter(Config.organizacao_id == organizacao.id).first()
     if not config:
-        config = Config(organizacao_id=ORGANIZACAO_PADRAO)
+        config = Config(organizacao_id=organizacao.id)
         db.add(config)
         db.commit()
         db.refresh(config)
@@ -36,12 +36,6 @@ def atualizar_config(dados: ConfigEntrada, db: Session = Depends(get_db)):
     config.checkin_travado = dados.checkin_travado
     config.dias_para_rip = dados.dias_para_rip
     config.dias_para_aposentado = dados.dias_para_aposentado
-    config.nome_grupo = dados.nome_grupo
-    config.subtitulo = dados.subtitulo
-    config.logo_url = dados.logo_url
-    config.cor_primaria = dados.cor_primaria
-    config.cor_secundaria = dados.cor_secundaria
-    config.link_rede_social = dados.link_rede_social
     db.commit()
     db.refresh(config)
     return config

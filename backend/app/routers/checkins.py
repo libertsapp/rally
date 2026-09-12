@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.checkin import Checkin
-from app.routers.config import ORGANIZACAO_PADRAO, get_or_create_config
+from app.routers.config import get_or_create_config
 from app.schemas.checkin import CheckinEntrada, CheckinSaida
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
@@ -36,7 +36,7 @@ def confirmar_presenca(dados: CheckinEntrada, db: Session = Depends(get_db)):
 
     checkin = Checkin(
         id=str(uuid.uuid4()),
-        organizacao_id=ORGANIZACAO_PADRAO,
+        organizacao_id=config.organizacao_id,
         data=config.checkin_data_aberta,
         jogador_id=dados.jogador_id,
         jogador_nome=dados.jogador_nome,
