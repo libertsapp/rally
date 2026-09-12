@@ -12,6 +12,8 @@ venv/
 # logs de servidor local
 backend/uvicorn.log
 frontend/server.log
+vercel-dev.log
+logs.txt
 
 # backups / exports — não versionar arquivos zip do projeto
 *.zip
@@ -22,3 +24,6 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+.vercel
+.env*

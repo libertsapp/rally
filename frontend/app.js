@@ -1,6 +1,9 @@
 /* Vôlei — frontend leve (sem build), consome a API FastAPI em backend/. */
 
-const API_BASE = window.API_BASE || 'http://127.0.0.1:8000';
+// Dev local (dois servidores separados, frontend na porta 5500) aponta pro
+// uvicorn direto; em qualquer outro caso (vercel dev, produção) a API mora
+// na mesma origem, sob /api — sem precisar mexer nisso a cada deploy.
+const API_BASE = window.API_BASE || (window.location.port === '5500' ? 'http://127.0.0.1:8000' : '/api');
 
 /* ---------------- estado ---------------- */
 const state = {
