@@ -14,6 +14,15 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./volei.db")
+
+# provedores de Postgres (Neon, Supabase, Vercel Postgres...) costumam dar a
+# URL como "postgres://" ou "postgresql://" puro, que o SQLAlchemy tentaria
+# abrir com psycopg2 — mas instalamos psycopg (v3). Força o driver certo.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
