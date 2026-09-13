@@ -110,6 +110,8 @@ def badges(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get
     hoje = date.today()
     rip, aposentado = [], []
     for pid, data_str in _ultima_participacao(db, organizacao.id).items():
+        if pid not in jogadores:
+            continue  # convidado avulso, sem cadastro de Jogador — não entra nos emblemas
         try:
             dias = (hoje - datetime.strptime(data_str, "%Y-%m-%d").date()).days
         except ValueError:

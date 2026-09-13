@@ -85,6 +85,18 @@ def test_hall_da_fama_agrupa_campeoes_por_ano():
     assert campeao in ids_vencedores
 
 
+def test_badges_rip_e_aposentado_ignoram_convidados_sem_cadastro():
+    convidado_id = "convidado:FULANO#a1b2"
+    _criar_rodada(
+        _dias_atras(150), [{"nome": "Time 1", "player_ids": [convidado_id], "vitorias": 0}], vencedor=-1
+    )
+
+    badges = client.get("/badges").json()
+
+    assert convidado_id not in badges["rip"]
+    assert convidado_id not in badges["aposentado"]
+
+
 def test_hall_da_fama_agrupa_campeoes_por_mes():
     ano = str(date.today().year)
     campeao = _criar_jogador("HallCampeaoMes")
