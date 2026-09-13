@@ -45,6 +45,27 @@ def test_resumo_conta_dias_jogados_e_campeao_da_semana():
     assert ana in resumo["campeao_semana"]["player_ids"]
 
 
+def test_resumo_nao_conta_convidados_avulsos_como_desaparecidos():
+    """Reproduz um bug real: convidados avulsos ("convidado:NOME#hash", sem
+    cadastro de Jogador) que sumiram do histórico faziam jogadores_ativos
+    virar negativo, porque desaparecidos contava qualquer player_id visto
+    numa rodada — cadastrado ou não."""
+    ana = _criar_jogador("AnaSoJogadoraResumo")
+    _criar_rodada(
+        _dias_atras(150),
+        [
+            {"nome": "Time 1", "player_ids": ["convidado:Fulano#a1", "convidado:Ciclano#b2"], "vitorias": 0},
+            {"nome": "Time 2", "player_ids": [ana], "vitorias": 0},
+        ],
+        vencedor=-1,
+    )
+
+    resumo = client.get("/dashboard/resumo").json()
+
+    assert resumo["desaparecidos"] <= 1  # só a Ana pode contar; convidados não têm cadastro
+    assert resumo["jogadores_ativos"] >= 0
+
+
 def test_mais_vezes_na_foto_ordena_por_quantidade():
     campeao = _criar_jogador("CampeaoFoto")
     perdedor = _criar_jogador("PerdedorFoto")

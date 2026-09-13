@@ -48,10 +48,14 @@ def resumo(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get
     ano_atual = ano_de(ultima.data)
     dias_jogados = sum(1 for r in rodadas if ano_de(r.data) == ano_atual)
 
+    ids_cadastrados = {p.id for p in total_jogadores_query.all()}
+
     ultima_participacao: dict[str, str] = {}
     for r in rodadas:
         for t in r.times:
             for pid in t.player_ids:
+                if pid not in ids_cadastrados:
+                    continue  # convidado avulso, sem cadastro de Jogador — não conta como "sumido"
                 if pid not in ultima_participacao or r.data > ultima_participacao[pid]:
                     ultima_participacao[pid] = r.data
 
@@ -65,7 +69,7 @@ def resumo(db: Session = Depends(get_db), organizacao: Organizacao = Depends(get
         if dias > config.dias_para_rip:
             desaparecidos += 1
 
-    total_jogadores = total_jogadores_query.count()
+    total_jogadores = len(ids_cadastrados)
 
     campeao = None
     vencedor_idx = ultima.vencedor

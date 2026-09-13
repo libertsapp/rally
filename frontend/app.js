@@ -15,6 +15,15 @@ function gravarOrganizacaoSelecionada(id) {
   } catch (e) { /* modo privado ou afins — segue sem persistir, só nesta sessão */ }
 }
 
+// Protege contra corrida entre renderizações: se o usuário navega antes de uma
+// tela terminar de carregar (fetch lento), a tela antiga não pode "vencer a
+// corrida" e sobrescrever a nova quando sua Promise finalmente resolver.
+// Cada render() gera um token novo; toda escrita em view.innerHTML feita
+// depois de um `await` confere se o token ainda é o atual antes de escrever.
+let renderToken = 0;
+function novoToken() { return ++renderToken; }
+function tokenValido(token) { return token === renderToken; }
+
 /* ---------------- estado ---------------- */
 const state = {
   tab: 'inicio',
@@ -75,6 +84,12 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function nomeDe(p) { return p ? (p.apelido || p.nome) : '(removido)'; }
+// jogadores cadastrados resolvem pelo cadastro; "convidado:NOME#hash" (gente
+// avulsa que jogou sem cadastro) mostra o nome direto do próprio id.
+function nomeDoParticipante(pid) {
+  if (pid.startsWith('convidado:')) return pid.slice('convidado:'.length).split('#')[0] + ' (convidado)';
+  return nomeDe(jogadorPorId(pid));
+}
 function iniciais(nome) { return (nome || '?').trim().charAt(0).toUpperCase(); }
 function jogadorPorId(id) { return state.jogadores.find((p) => p.id === id); }
 function anoAtual() { return String(new Date().getFullYear()); }
@@ -95,7 +110,6 @@ function aplicarIdentidade(org) {
 function switchTab(tab) {
   state.tab = tab;
   state.sub = null;
-  document.querySelectorAll('#bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   render();
 }
 document.getElementById('bottom-nav').addEventListener('click', (e) => {
@@ -143,23 +157,31 @@ document.getElementById('auth-btn').addEventListener('click', async () => {
 });
 
 function render() {
+  const token = novoToken();
   const view = document.getElementById('view');
   const renderers = { inicio: renderInicio, checkin: renderCheckin, sorteio: renderSorteio, ranking: renderRanking, mais: renderMais };
+  document.querySelectorAll('#bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   view.innerHTML = '<div class="empty">Carregando...</div>';
-  (renderers[state.tab] || renderInicio)(view);
+  (renderers[state.tab] || renderInicio)(view, token);
 }
 
 /* ================= INÍCIO ================= */
-async function renderInicio(view) {
+async function renderInicio(view, token) {
   try {
-    const [resumo, ausentes] = await Promise.all([get('/dashboard/resumo'), get('/dashboard/ausentes')]);
+    // busca jogadores junto (não só o resumo) — sem isso, os nomes do banner de
+    // campeão viram "(removido)" quando Início é a primeira tela carregada
+    const [resumo, ausentes, jogadores] = await Promise.all([
+      get('/dashboard/resumo'), get('/dashboard/ausentes'), get('/jogadores'),
+    ]);
+    if (!tokenValido(token)) return; // usuário já navegou pra outra tela enquanto isso carregava
+    state.jogadores = jogadores;
     const campeao = resumo.campeao_semana;
     view.innerHTML = `
       ${campeao ? `
         <div class="panel" style="border-color:var(--accent);">
           <div class="row-sub">CAMPEÃO MAIS RECENTE — ${escapeHtml(campeao.data)}</div>
           <div style="font-family:'Archivo Black';font-size:18px;margin-top:4px;">🏆 ${escapeHtml(campeao.time_nome)}</div>
-          <div class="row-sub" style="margin-top:6px;">${campeao.player_ids.map((id) => escapeHtml(nomeDe(jogadorPorId(id)))).join(', ')}</div>
+          <div class="row-sub" style="margin-top:6px;">${campeao.player_ids.map((id) => escapeHtml(nomeDoParticipante(id))).join(', ')}</div>
         </div>
       ` : `<div class="empty">Nenhuma rodada com campeão definido ainda.</div>`}
 
@@ -182,6 +204,7 @@ async function renderInicio(view) {
       ` : ''}
     `;
   } catch (e) {
+    if (!tokenValido(token)) return;
     view.innerHTML = `<div class="empty">Não consegui carregar o início: ${escapeHtml(e.message)}</div>`;
   }
 }
@@ -194,13 +217,15 @@ async function carregarCheckinData() {
   state.checkins = checkins;
 }
 
-async function renderCheckin(view) {
+async function renderCheckin(view, token = novoToken()) {
   try {
     await carregarCheckinData();
   } catch (e) {
+    if (!tokenValido(token)) return;
     view.innerHTML = `<div class="empty">Não consegui carregar o check-in: ${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (!tokenValido(token)) return;
   const cfg = state.config;
   const aberto = !!cfg.checkin_data_aberta;
   const confirmadosHoje = new Set(state.checkins.filter((c) => c.data === cfg.checkin_data_aberta).map((c) => c.jogador_id));
@@ -272,13 +297,15 @@ async function renderCheckin(view) {
 }
 
 /* ================= SORTEIO ================= */
-async function renderSorteio(view) {
+async function renderSorteio(view, token = novoToken()) {
   try {
     await carregarCheckinData();
   } catch (e) {
+    if (!tokenValido(token)) return;
     view.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
     return;
   }
+  if (!tokenValido(token)) return;
   const confirmadosHoje = state.config.checkin_data_aberta
     ? new Set(state.checkins.filter((c) => c.data === state.config.checkin_data_aberta).map((c) => c.jogador_id))
     : new Set();
@@ -324,7 +351,9 @@ async function renderSorteio(view) {
     }
     const times = await post('/sorteio/times', { jogador_ids: ids, num_times: numTimes, grupos });
     state.draftTeams = times;
-    renderResultadoSorteio(document.getElementById('sorteio-resultado'), numTimes);
+    const container = document.getElementById('sorteio-resultado');
+    if (!container) return; // usuário já saiu da tela do sorteio antes da resposta chegar
+    renderResultadoSorteio(container, numTimes);
   }));
 }
 
@@ -370,12 +399,13 @@ function renderResultadoSorteio(container, numTimes) {
     }));
     await post('/rodadas', { data, rascunho: false, vencedor, times: rodadaTimes });
     state.draftTeams = null;
+    if (!container.isConnected) return; // usuário já saiu da tela antes da resposta chegar
     container.innerHTML = '<div class="empty">Rodada salva! Confira no Ranking ou no Início.</div>';
   }, 'Rodada salva.'));
 }
 
 /* ================= RANKING ================= */
-async function renderRanking(view) {
+async function renderRanking(view, token = novoToken()) {
   const ano = state.rankingAno || anoAtual();
   view.innerHTML = `
     <div class="panel">
@@ -391,9 +421,10 @@ async function renderRanking(view) {
   await carregarRanking();
 
   async function carregarRanking() {
-    const tabela = document.getElementById('ranking-tabela');
     try {
       const linhas = await get(`/ranking?ano=${encodeURIComponent(state.rankingAno || ano)}`);
+      const tabela = document.getElementById('ranking-tabela');
+      if (!tokenValido(token) || !tabela) return; // usuário já saiu da tela do ranking
       if (linhas.length === 0) { tabela.innerHTML = '<div class="empty">Sem rodadas nesse ano ainda.</div>'; return; }
       tabela.innerHTML = `
         <table class="simple">
@@ -411,23 +442,27 @@ async function renderRanking(view) {
           </tbody>
         </table>`;
     } catch (e) {
+      const tabela = document.getElementById('ranking-tabela');
+      if (!tokenValido(token) || !tabela) return;
       tabela.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
     }
   }
 }
 
 /* ================= MAIS (menu + sub-telas) ================= */
-async function renderMais(view) {
+async function renderMais(view, token = novoToken()) {
   const subs = {
     jogadores: renderJogadoresSub,
     config: renderConfigSub,
     hall: renderHallSub,
     placar: renderPlacarSub,
     organizacoes: renderOrganizacoesSub,
+    historico: renderHistoricoSub,
   };
-  if (state.sub && subs[state.sub]) { await subs[state.sub](view); return; }
+  if (state.sub && subs[state.sub]) { await subs[state.sub](view, token); return; }
 
   const itens = [
+    ['historico', '📋', 'Histórico', 'Todas as rodadas já jogadas'],
     ['jogadores', '👤', 'Jogadores', 'Cadastrar, editar e remover'],
     ['placar', '🔴', 'Placar ao vivo', 'Contagem em tela cheia'],
     ['hall', '🏆', 'Hall da Fama', 'Campeões por mês e por ano'],
@@ -455,17 +490,19 @@ async function renderMais(view) {
 }
 
 /* ---- Organizações (só superadmin) ---- */
-async function renderOrganizacoesSub(view) {
+async function renderOrganizacoesSub(view, token = novoToken()) {
   view.innerHTML = `${subHeader('Organizações')}<div class="empty">Carregando...</div>`;
   wireVoltar(view);
   let lista;
   try {
     lista = await get('/organizacoes');
   } catch (e) {
+    if (!tokenValido(token)) return;
     view.innerHTML = `${subHeader('Organizações')}<div class="empty">${escapeHtml(e.message)}</div>`;
     wireVoltar(view);
     return;
   }
+  if (!tokenValido(token)) return;
 
   const vendoDev = !state.organizacaoSelecionadaId;
   view.innerHTML = `
@@ -523,6 +560,50 @@ async function renderOrganizacoesSub(view) {
   });
 }
 
+/* ---- Histórico de rodadas ---- */
+async function renderHistoricoSub(view, token = novoToken()) {
+  view.innerHTML = `${subHeader('Histórico')}<div class="empty">Carregando...</div>`;
+  wireVoltar(view);
+  let rodadas;
+  try {
+    [rodadas, state.jogadores] = await Promise.all([get('/rodadas'), get('/jogadores')]);
+  } catch (e) {
+    if (!tokenValido(token)) return;
+    view.innerHTML = `${subHeader('Histórico')}<div class="empty">${escapeHtml(e.message)}</div>`;
+    wireVoltar(view);
+    return;
+  }
+  if (!tokenValido(token)) return;
+  rodadas = rodadas.slice().sort((a, b) => b.data.localeCompare(a.data));
+
+  view.innerHTML = `
+    ${subHeader('Histórico')}
+    ${rodadas.length === 0 ? '<div class="empty">Nenhuma rodada lançada ainda.</div>' : rodadas.map((r) => `
+      <div class="panel">
+        <div class="row-sub">${escapeHtml(r.data)}${r.rascunho ? ' · rascunho' : ''}</div>
+        <div class="times-grid" style="margin-top:8px;">
+          ${r.times.map((t, i) => `
+            <div class="time-card" style="${i === r.vencedor ? 'border-color:var(--win);' : ''}">
+              <h4>${escapeHtml(t.nome)}${i === r.vencedor ? ' 🏆' : ''}</h4>
+              ${t.player_ids.map((pid) => `<div class="player-name">${escapeHtml(nomeDoParticipante(pid))}</div>`).join('')}
+              <div class="row-sub" style="margin-top:6px;">${t.vitorias} vitória(s) de partida</div>
+            </div>`).join('')}
+        </div>
+        <div class="btn-row">
+          <button class="btn ghost" style="padding:6px 10px;font-size:12px;" data-remover-rodada="${r.id}">Remover</button>
+        </div>
+      </div>`).join('')}
+  `;
+  wireVoltar(view);
+  view.querySelectorAll('[data-remover-rodada]').forEach((btn) => {
+    btn.addEventListener('click', () => tryRun(async () => {
+      if (!confirm('Remover esta rodada? Isso não pode ser desfeito.')) return;
+      await del(`/rodadas/${btn.dataset.removerRodada}`);
+      await renderHistoricoSub(view);
+    }, 'Rodada removida.'));
+  });
+}
+
 function subHeader(titulo) {
   return `<button class="btn ghost" id="voltar-mais-btn" style="margin-bottom:12px;">‹ Mais</button><div class="section-title" style="margin-top:0;">${titulo}</div>`;
 }
@@ -532,8 +613,9 @@ function wireVoltar(view, after) {
 }
 
 /* ---- Jogadores (CRUD) ---- */
-async function renderJogadoresSub(view) {
+async function renderJogadoresSub(view, token = novoToken()) {
   const jogadores = await get('/jogadores');
+  if (!tokenValido(token)) return;
   state.jogadores = jogadores;
   view.innerHTML = `
     ${subHeader('Jogadores')}
@@ -577,8 +659,9 @@ async function renderJogadoresSub(view) {
 /* ---- Config / identidade ----
    Identidade (nome, cores, logo) mora em Organizacao; prazos de ausência e
    check-in são configuração operacional (Config) — dois recursos, um form. */
-async function renderConfigSub(view) {
+async function renderConfigSub(view, token = novoToken()) {
   const [cfg, org] = await Promise.all([get('/config'), get('/organizacoes/atual')]);
+  if (!tokenValido(token)) return;
   state.config = cfg;
   state.organizacao = org;
   view.innerHTML = `
@@ -623,7 +706,7 @@ async function renderConfigSub(view) {
 }
 
 /* ---- Hall da Fama ---- */
-async function renderHallSub(view) {
+async function renderHallSub(view, token = novoToken()) {
   view.innerHTML = `${subHeader('Hall da Fama')}
     <div class="btn-row"><button class="btn secondary" data-modo="anual">Por ano</button><button class="btn ghost" data-modo="mensal">Por mês</button></div>
     <div id="hall-lista"><div class="empty">Carregando...</div></div>`;
@@ -632,7 +715,9 @@ async function renderHallSub(view) {
     view.querySelectorAll('[data-modo]').forEach((b) => b.classList.toggle('secondary', b.dataset.modo === modo));
     view.querySelectorAll('[data-modo]').forEach((b) => b.classList.toggle('ghost', b.dataset.modo !== modo));
     const lista = await get(`/hall-da-fama?modo=${modo}`);
-    document.getElementById('hall-lista').innerHTML = lista.length === 0
+    const listaEl = document.getElementById('hall-lista');
+    if (!tokenValido(token) || !listaEl) return;
+    listaEl.innerHTML = lista.length === 0
       ? '<div class="empty">Sem rodadas com campeão definido ainda.</div>'
       : lista.map((item) => `
         <div class="panel">
@@ -694,13 +779,19 @@ async function recarregarIdentidade() {
 
 /* ---------------- init ---------------- */
 (async function init() {
+  // primeira renderização acontece já aqui (state.tab começa em 'inicio') —
+  // não espera o Clerk pra mostrar algo na tela
   try {
     await recarregarIdentidade();
   } catch (e) {
     toast('Não consegui conectar na API em ' + API_BASE, true);
+    switchTab('inicio');
   }
 
-  // Clerk carrega via <script async> no index.html — pode não estar pronto ainda
+  // Clerk carrega via <script async> no index.html — pode não estar pronto ainda.
+  // Tudo daqui pra baixo roda em segundo plano: NUNCA deve forçar navegação de
+  // volta pra Início — se o usuário já clicou em outra aba enquanto isso
+  // carregava, essa navegação tem que ser respeitada, não sobrescrita.
   const esperarClerk = () => new Promise((resolve) => {
     if (window.Clerk) return resolve();
     const check = setInterval(() => { if (window.Clerk) { clearInterval(check); resolve(); } }, 100);
@@ -711,12 +802,11 @@ async function recarregarIdentidade() {
     await window.Clerk.load();
     await carregarUsuarioAtual();
     atualizarBotaoAuth();
+    render(); // reflete o usuário/papel recém-carregado na tela atual, sem trocar de aba
     window.Clerk.addListener(async () => {
       await carregarUsuarioAtual();
       atualizarBotaoAuth();
       render();
     });
   }
-
-  switchTab('inicio');
 })();
