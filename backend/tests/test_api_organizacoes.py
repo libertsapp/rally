@@ -71,6 +71,15 @@ def test_organizacao_atual_bootstrap_automatico():
     assert de_novo["id"] == resposta.json()["id"]
 
 
+def test_organizacao_atual_respeita_header_x_organizacao_id():
+    criada = _criar_org(slug="via-header")
+
+    resposta = client.get("/organizacoes/atual", headers={"X-Organizacao-Id": criada["id"]})
+
+    assert resposta.status_code == 200
+    assert resposta.json()["slug"] == "via-header"
+
+
 def test_organizacao_inexistente_retorna_404():
     assert client.get("/organizacoes/nao-existe").status_code == 404
 

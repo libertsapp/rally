@@ -5,6 +5,16 @@
 // na mesma origem, sob /api — sem precisar mexer nisso a cada deploy.
 const API_BASE = window.API_BASE || (window.location.port === '5500' ? 'http://127.0.0.1:8000' : '/api');
 
+function lerOrganizacaoSelecionada() {
+  try { return localStorage.getItem('org_selecionada_id') || null; } catch (e) { return null; }
+}
+function gravarOrganizacaoSelecionada(id) {
+  try {
+    if (id) localStorage.setItem('org_selecionada_id', id);
+    else localStorage.removeItem('org_selecionada_id');
+  } catch (e) { /* modo privado ou afins — segue sem persistir, só nesta sessão */ }
+}
+
 /* ---------------- estado ---------------- */
 const state = {
   tab: 'inicio',
@@ -16,11 +26,13 @@ const state = {
   draftGrupos: null,
   placar: { nomeA: 'Time A', nomeB: 'Time B', a: 0, b: 0 },
   usuario: null, // { id, email, tipo, organizacao_id } — null enquanto não logado
+  organizacaoSelecionadaId: lerOrganizacaoSelecionada(), // só usado por superadmin (ver renderTrocarOrgSub)
 };
 
 /* ---------------- api helper ---------------- */
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
+  if (state.organizacaoSelecionadaId) headers['X-Organizacao-Id'] = state.organizacaoSelecionadaId;
   if (window.Clerk?.session) {
     try {
       const token = await window.Clerk.session.getToken();
@@ -68,12 +80,15 @@ function jogadorPorId(id) { return state.jogadores.find((p) => p.id === id); }
 function anoAtual() { return String(new Date().getFullYear()); }
 
 /* ---------------- identidade visual (Organizacao) ---------------- */
+const COR_PADRAO = '#f0603a'; // mesma cor de --accent no style.css, pra resetar quando a org não tem cor própria
+
 function aplicarIdentidade(org) {
   const root = document.documentElement;
-  if (org.cor_primaria) root.style.setProperty('--accent', org.cor_primaria);
+  const cor = org.cor_primaria || COR_PADRAO;
+  root.style.setProperty('--accent', cor);
   document.getElementById('brand-name').textContent = org.nome || 'Vôlei';
   document.getElementById('brand-sub').textContent = org.subtitulo || 'Organização recreativa';
-  if (org.cor_primaria) document.getElementById('brand-dot').style.background = org.cor_primaria;
+  document.getElementById('brand-dot').style.background = cor;
 }
 
 /* ---------------- navegação ---------------- */
@@ -432,7 +447,7 @@ async function renderMais(view) {
           <div class="row-right">›</div>
         </div>`).join('')}
     </div>
-    ${state.usuario ? `<div class="empty">Logado como ${escapeHtml(state.usuario.email)} (${state.usuario.tipo})</div>` : ''}
+    ${state.usuario ? `<div class="empty">Logado como ${escapeHtml(state.usuario.email)} (${state.usuario.tipo})${state.organizacaoSelecionadaId ? ` — vendo <strong>${escapeHtml(state.organizacao?.nome || '')}</strong>` : ''}</div>` : ''}
   `;
   view.querySelectorAll('[data-open-sub]').forEach((row) => {
     row.addEventListener('click', () => { state.sub = row.dataset.openSub; render(); });
@@ -452,6 +467,7 @@ async function renderOrganizacoesSub(view) {
     return;
   }
 
+  const vendoDev = !state.organizacaoSelecionadaId;
   view.innerHTML = `
     ${subHeader('Organizações')}
     <div class="panel">
@@ -462,11 +478,19 @@ async function renderOrganizacoesSub(view) {
       <button class="btn block" id="criar-org-btn">Criar organização</button>
     </div>
     <div class="panel">
+      <div class="row">
+        <div class="avatar">🧪</div>
+        <div><div class="row-name">dev (padrão)</div><div class="row-sub">organização de teste/bootstrap</div></div>
+        <div class="row-right">${vendoDev ? '<span class="pill win">vendo</span>' : '<button class="btn ghost" style="padding:6px 10px;font-size:12px;" id="ver-dev-btn">Ver</button>'}</div>
+      </div>
       ${lista.map((o) => `
         <div class="row">
           <div class="avatar">${iniciais(o.nome)}</div>
           <div><div class="row-name">${escapeHtml(o.nome)}</div><div class="row-sub">${escapeHtml(o.slug)}</div></div>
-          <div class="row-right"><button class="btn ghost" style="padding:6px 10px;font-size:12px;" data-convidar="${o.id}">+ admin</button></div>
+          <div class="row-right">
+            ${state.organizacaoSelecionadaId === o.id ? '<span class="pill win">vendo</span>' : `<button class="btn ghost" style="padding:6px 10px;font-size:12px;" data-ver="${o.id}">Ver</button>`}
+            <button class="btn ghost" style="padding:6px 10px;font-size:12px;" data-convidar="${o.id}">+ admin</button>
+          </div>
         </div>`).join('')}
     </div>
   `;
@@ -478,6 +502,18 @@ async function renderOrganizacoesSub(view) {
     await post('/organizacoes', { nome, slug });
     await renderOrganizacoesSub(view);
   }, 'Organização criada.'));
+  document.getElementById('ver-dev-btn')?.addEventListener('click', () => tryRun(async () => {
+    state.organizacaoSelecionadaId = null;
+    gravarOrganizacaoSelecionada(null);
+    await recarregarIdentidade(); // já re-renderiza esta tela (state.sub continua 'organizacoes')
+  }));
+  view.querySelectorAll('[data-ver]').forEach((btn) => {
+    btn.addEventListener('click', () => tryRun(async () => {
+      state.organizacaoSelecionadaId = btn.dataset.ver;
+      gravarOrganizacaoSelecionada(btn.dataset.ver);
+      await recarregarIdentidade();
+    }));
+  });
   view.querySelectorAll('[data-convidar]').forEach((btn) => {
     btn.addEventListener('click', () => tryRun(async () => {
       const email = prompt('E-mail do admin a convidar:');
@@ -649,12 +685,17 @@ async function renderPlacarSub(view) {
   });
 }
 
+async function recarregarIdentidade() {
+  const org = await get('/organizacoes/atual');
+  state.organizacao = org;
+  aplicarIdentidade(org);
+  render();
+}
+
 /* ---------------- init ---------------- */
 (async function init() {
   try {
-    const org = await get('/organizacoes/atual');
-    state.organizacao = org;
-    aplicarIdentidade(org);
+    await recarregarIdentidade();
   } catch (e) {
     toast('Não consegui conectar na API em ' + API_BASE, true);
   }

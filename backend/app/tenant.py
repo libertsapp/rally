@@ -5,7 +5,7 @@ Ordem de prioridade:
    nunca pode ser sobrescrito por header (senão um admin logado poderia se
    passar por outra organização só mandando um header diferente).
 2. Header `X-Organizacao-Id` — usado por quem não tem organização própria
-   ainda (superadmin navegando, ou dev/teste sem Clerk configurado).
+   ainda (superadmin navegando entre organizações, ou dev/teste sem Clerk).
 3. Organização "dev" — mesmo comportamento de sempre, backward compatible.
 """
 
@@ -16,7 +16,7 @@ from app.clerk_auth import get_usuario_atual
 from app.database import get_db
 from app.models.organizacao import Organizacao
 from app.models.usuario import Usuario
-from app.routers.organizacoes import get_or_create_organizacao_padrao
+from app.org_bootstrap import get_or_create_organizacao_padrao
 
 
 def get_organizacao_atual(

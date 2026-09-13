@@ -17,28 +17,12 @@ from app.database import get_db
 from app.models.config import Config
 from app.models.organizacao import Organizacao
 from app.models.usuario import Usuario
+from app.org_bootstrap import get_or_create_organizacao_padrao
 from app.schemas.organizacao import OrganizacaoAtualizar, OrganizacaoEntrada, OrganizacaoSaida
 from app.schemas.usuario import ConvidarAdminEntrada, UsuarioSaida
+from app.tenant import get_organizacao_atual
 
 router = APIRouter(prefix="/organizacoes", tags=["organizacoes"])
-
-SLUG_ORGANIZACAO_PADRAO = "dev"
-
-
-def get_or_create_organizacao_padrao(db: Session) -> Organizacao:
-    """Organização usada por todo o resto da API enquanto um usuário não tem
-    organização própria (visitante anônimo, ou dev/teste sem Clerk) — ver
-    app/tenant.py pra como isso se encaixa com a resolução por usuário
-    autenticado."""
-    organizacao = db.query(Organizacao).filter(Organizacao.slug == SLUG_ORGANIZACAO_PADRAO).first()
-    if not organizacao:
-        organizacao = Organizacao(slug=SLUG_ORGANIZACAO_PADRAO, nome="Organização de desenvolvimento")
-        db.add(organizacao)
-        db.commit()
-        db.refresh(organizacao)
-        db.add(Config(organizacao_id=organizacao.id))
-        db.commit()
-    return organizacao
 
 
 def _exigir_superadmin(usuario: Usuario | None = Depends(get_usuario_atual)) -> Usuario:
@@ -73,10 +57,11 @@ def criar_organizacao(
 
 
 @router.get("/atual", response_model=OrganizacaoSaida)
-def obter_organizacao_atual(db: Session = Depends(get_db)):
-    """Organização "corrente" pro frontend usar enquanto não existe resolução
-    de tenant por request de verdade (ver get_or_create_organizacao_padrao)."""
-    return get_or_create_organizacao_padrao(db)
+def obter_organizacao_atual(organizacao: Organizacao = Depends(get_organizacao_atual)):
+    """Organização "corrente": a do usuário autenticado, ou a apontada pelo
+    header X-Organizacao-Id (usado pelo seletor de organização do
+    superadmin), ou a "dev" de bootstrap — ver app/tenant.py."""
+    return organizacao
 
 
 @router.get("/{organizacao_id}", response_model=OrganizacaoSaida)
